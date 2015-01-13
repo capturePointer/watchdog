@@ -13,10 +13,13 @@
 #include <iostream>       // std::cout
 #include <thread>         // std::thread
 #include <csignal>
+#include <Poco/Process.h>
 
+#include <syslog.h>
 #include "config.h"
+#include "easylogging++.h"
 
-#include "Poco/Process.h"
+INITIALIZE_EASYLOGGINGPP
 
 using std::string;
 using std::cout;
@@ -35,8 +38,7 @@ Config config;
 
 
 void signalHandler (int signum) {
-    std::cout << "Watchdog: Interrupt signal (" << signum << ") received."<<std::endl;
-
+    SYSLOG(INFO) << "Interrupt signal (" << signum << ") received.";
     if(processStarted == true && p_id != 0) {
         processKillRequest = true;
 
@@ -45,10 +47,10 @@ void signalHandler (int signum) {
         }
         // send signal to process
         if(config.kill_friendly) {
-            std::cout<<"friendly killing of process...";
+            SYSLOG(INFO) << "friendly killing of process...";
             Poco::Process::requestTermination(p_id);
         } else {
-            std::cout<<"hard killing of process...";
+            SYSLOG(INFO) << "hard killing of process...";
             Poco::Process::kill(p_id);
         }
     }
@@ -83,6 +85,10 @@ void showHelp() {
 
 int main(int argc, char** argv){
     
+    ELPP_INITIALIZE_SYSLOG("watchdog", LOG_PID | LOG_CONS | LOG_PERROR, LOG_USER);
+
+    SYSLOG(INFO) << "started watchdog";
+
     // register signal handler
     signal(SIGINT,  signalHandler); // Strg-C  -- kill
     signal(SIGUSR1, signalHandler); // 10      -- restart
@@ -156,32 +162,36 @@ int main(int argc, char** argv){
     for(;;) {
         init();
 
-        cout<<"Start Process: "<<program_name<<"\n";
+        SYSLOG(INFO) << "starting monitored service.";
 
         t = std::thread(startProcess, program_name, programm_args);
         t.join();
+
+        SYSLOG(INFO) << "monitored service finished.";
 
         if(ret_code != 0 && config.restart_crached == false) {
             break;
         }
 
-        cout<<"Thread finished with:"<<ret_code<<"\n";
-        if(processKillRequest == true) {
-            cout<<"processKillRequest after\n";
+        SYSLOG(INFO) << "monitored process finished with return code " << ret_code << ".";
 
-            if(processRestartRequest == false) exit(0);
+        if(processKillRequest == true) {
+            if(processRestartRequest == false){
+                SYSLOG(INFO) << "stopping watchdog";
+                exit(0);  
+            } 
         }
 
         if(config.restart_trys > 0 && config.restart_trys != -1) {
             config.restart_trys--;
         } else {
             if(config.restart_trys == 0) {
+                SYSLOG(INFO) << "give up restarting";
                 cout<<"Watchdog finished.\n";
                 exit(0);
             }
         }
+        SYSLOG(INFO) << "restarting service...";
     }       
-    
-
     exit(0);
 }
